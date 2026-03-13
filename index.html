@@ -131,7 +131,7 @@ var db = null; // verrà impostato dopo init Firebase
 
 // ── ELO ───────────────────────────────────────────────────────────────────────
 function calcElo(rA, rB, gA, gB, winA) {
-  var eA = 1 / (1 + Math.pow(10, (rB - rA) / 800));
+  var eA = 1 / (1 + Math.pow(10, (rB - rA) / 400));
   var kA = gA < 10 ? 40 : gA < 30 ? 30 : 20;
   var kB = gB < 10 ? 40 : gB < 30 ? 30 : 20;
   var sA = winA ? 1 : 0, sB = winA ? 0 : 1;
@@ -713,10 +713,99 @@ function renderH2H() {
     '</div>';
 }
 
+
+// ── RICALCOLA TUTTO ────────────────────────────────────────────────────────────
+function confirmRecalcAll() {
+  if (!confirm('Sei sicuro? Tutti i rating verranno ricalcolati da zero partendo da 1500. Le partite salvate non vengono modificate.')) return;
+  recalcAll();
+}
+
+function recalcAll() {
+  // Ordina tutte le partite per data
+  var allMatches = matches.slice().sort(function(a, b) {
+    return new Date(a.date) - new Date(b.date);
+  });
+
+  // Resetta tutti i giocatori a 1500
+  var ratings = {}, games = {}, wins = {}, losses = {}, history = {};
+  players.forEach(function(p) {
+    ratings[p.id] = DEFAULT_RATING;
+    games[p.id] = 0;
+    wins[p.id] = 0;
+    losses[p.id] = 0;
+    history[p.id] = [DEFAULT_RATING];
+  });
+
+  // Raggruppa le partite per giornata
+  var byDay = {};
+  allMatches.forEach(function(m) {
+    var day = m.date.split('T')[0];
+    if (!byDay[day]) byDay[day] = [];
+    byDay[day].push(m);
+  });
+
+  // Per ogni giornata: snapshot rating inizio giornata → calcola delta → applica
+  var updatedMatches = [];
+  Object.keys(byDay).sort().forEach(function(day) {
+    var dayMatches = byDay[day];
+    // Snapshot rating inizio giornata per tutti
+    var dayStartRatings = {}, dayStartGames = {};
+    Object.keys(ratings).forEach(function(id) {
+      dayStartRatings[id] = ratings[id];
+      dayStartGames[id] = games[id];
+    });
+
+    // Calcola delta per ogni partita usando rating inizio giornata
+    dayMatches.forEach(function(m) {
+      var rA = dayStartRatings[m.playerA] || DEFAULT_RATING;
+      var rB = dayStartRatings[m.playerB] || DEFAULT_RATING;
+      var gA = dayStartGames[m.playerA] || 0;
+      var gB = dayStartGames[m.playerB] || 0;
+      var res = calcElo(rA, rB, gA, gB, m.winner === m.playerA);
+
+      // Applica delta al rating corrente (non a quello di inizio giornata)
+      ratings[m.playerA] = (ratings[m.playerA] || DEFAULT_RATING) + res.deltaA;
+      ratings[m.playerB] = (ratings[m.playerB] || DEFAULT_RATING) + res.deltaB;
+      games[m.playerA] = (games[m.playerA] || 0) + 1;
+      games[m.playerB] = (games[m.playerB] || 0) + 1;
+      if (m.winner === m.playerA) { wins[m.playerA]++; losses[m.playerB]++; }
+      else { wins[m.playerB]++; losses[m.playerA]++; }
+      history[m.playerA] = (history[m.playerA] || [DEFAULT_RATING]).concat([ratings[m.playerA]]);
+      history[m.playerB] = (history[m.playerB] || [DEFAULT_RATING]).concat([ratings[m.playerB]]);
+
+      updatedMatches.push(Object.assign({}, m, { deltaA: res.deltaA, deltaB: res.deltaB }));
+    });
+  });
+
+  // Salva tutti i giocatori aggiornati su Firebase
+  players.forEach(function(p) {
+    var upd = Object.assign({}, p, {
+      rating: ratings[p.id] || DEFAULT_RATING,
+      games: games[p.id] || 0,
+      wins: wins[p.id] || 0,
+      losses: losses[p.id] || 0,
+      history: history[p.id] || [DEFAULT_RATING]
+    });
+    fbSavePlayer(upd);
+  });
+
+  // Salva tutte le partite con i delta aggiornati
+  updatedMatches.forEach(function(m) {
+    fbSaveMatch(m);
+  });
+
+  showToast('✓ Ricalcolo completato! Rating aggiornati per tutti.');
+}
+
 // ── EXPORT ────────────────────────────────────────────────────────────────────
 function renderExport() {
   document.getElementById('page-export').innerHTML =
     '<h2 style="margin-bottom:20px">💾 EXPORT</h2>' +
+    '<div class="card" style="max-width:480px;display:flex;flex-direction:column;gap:10px;margin-bottom:16px">' +
+      '<p style="font-family:\'Bebas Neue\',sans-serif;font-size:18px;letter-spacing:2px;color:#f87171;margin-bottom:6px">⚠️ RICALCOLA TUTTO</p>' +
+      '<p style="color:#888;font-size:12px;margin-bottom:10px">Resetta tutti i rating a 1500 e ricalcola tutto dall\'inizio con la formula attuale. Le partite della stessa giornata usano il rating di inizio giornata.</p>' +
+      '<button class="btn btn-danger" onclick="confirmRecalcAll()" style="width:100%">🔄 Ricalcola tutti i rating</button>' +
+    '</div>' +
     '<div class="card" style="max-width:480px;display:flex;flex-direction:column;gap:10px">' +
       '<button class="btn" style="justify-content:flex-start;padding:14px 18px;font-size:13px" onclick="doExport(\'ranking\')">' +
         '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>' +
