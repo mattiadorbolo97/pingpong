@@ -134,6 +134,7 @@ function calcElo(rA, rB, gA, gB, winA) {
   var eA = 1 / (1 + Math.pow(10, (rB - rA) / 400));
   var kA = gA < 10 ? 40 : gA < 30 ? 30 : 20;
   var kB = gB < 10 ? 40 : gB < 30 ? 30 : 20;
+  var k = Math.round((kA + kB) / 2); kA = k; kB = k;
   var sA = winA ? 1 : 0, sB = winA ? 0 : 1;
   return {
     newRA: Math.round(rA + kA * (sA - eA)),
